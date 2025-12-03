@@ -1,4 +1,4 @@
-```pseudocode
+```python
 for point in image:
   int indicator[point][circle];
   for circle in circles:
