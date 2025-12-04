@@ -762,7 +762,7 @@ __global__ void partialMult_back_kernel (float* r, float* g, float* b, float* al
 }
 
 
-__global__ void set_half(float *a, int n) {
+__global__ void assignAlphas(float *a, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
         a[idx] = 0.5f;
@@ -793,15 +793,65 @@ void allCircMap(float* r, float* g, float*b, float* alpha, int N)
   }
 }
 
-__global__ void assignRgbKernel(int* positions, float* r, float* g, float* b, int len) {
+__global__ void assignRgbKernel(
+    int* positions, 
+    float* r, 
+    float* g, 
+    float* b, 
+    float* alpha,
+    int len, 
+    int w, 
+    int h) {
   int index = blockIdx.x*blockDim.x + threadIdx.x;
-  if  (index > len) {return;}
-  float3 rgb_former = *(float3*)&(cuConstRendererParams.color[3*positions[index]]);
+  if  (index > len-1) {return;}
+  if (index == 0) {
+    r[index] = 0;
+    g[index] = 0;
+    b[index] = 0;
+    alpha[index] = 1;return;
+  }
+
+  if (index == len-1) {
+    r[index] = 0;
+    g[index] = 0;
+    b[index] = 0;
+    alpha[index] = 0;return;
+  }
+ 
+  if(index>1) {
+  float3 rgb_former = *(float3*)&(cuConstRendererParams.color[3*positions[index-1]]);
   r[index] = rgb_former.x;
   g[index] = rgb_former.y;
   b[index] = rgb_former.z;
+  alpha[index] = 0.5f;
+//  if (index == length - 1) {
+//    *lastr = rgb_former.x;
+//    *lastg = rgb_former.y;
+//    *lastb = rgb_former.z;
+//    *lastAlpha = 0.5f;
+//  }
+}
 }
 
+__global__ void deviceFinalCalc (float* r, float* g, float* b, float* alpha, int* numcircs) {
+    // todo : better use 2d index here
+    int imageHeight = cuConstRendererParams.imageHeight;
+    int imageWidth = cuConstRendererParams.imageWidth;
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index > imageHeight*imageWidth) {return;}
+    int ycord = index%imageHeight;
+    int xcord = (index - ycord)/imageHeight;
+    int numCircles = numcircs[index];
+
+    float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (ycord* imageWidth + xcord)]);
+    float4 colorFinal;
+    colorFinal.x = r[index*(numCircles+2) + numCircles + 1];
+    colorFinal.y = g[index*(numCircles+2) + numCircles + 1];
+    colorFinal.z = b[index*(numCircles+2) + numCircles + 1];
+    colorFinal.w = alpha[index*(numCircles+2) + numCircles + 1];
+    *imgPtr = colorFinal;
+}
 void
 CudaRenderer::render() {
     short imageWidth = image->width;
@@ -846,19 +896,23 @@ CudaRenderer::render() {
     int totalThreads = numCircles;
     int blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
 
+    cudaMemcpy(pointwise_circcnt,
+        indicator_array,
+        sizeof(int)*imageHeight*imageWidth, 
+        cudaMemcpyDeviceToHost);
+
     for (int i=0; i<imageWidth; i++) {
       for (int j=0; j<imageHeight; j++) {
         arrayPosn_pre = i*imageHeight + j;
         arrayPosn     = numCircles*arrayPosn_pre;
-
-        cudaMemcpy(pointwise_circcnt+arrayPosn_pre*sizeof(int), 
-            indicator_array + (arrayPosn+numCircles-1)*sizeof(int), 
-            sizeof(int), 
-            cudaMemcpyDeviceToHost);
-
+        // TODO: single memcpy needed!!! not supposed to be in loop!!!
+//    cudaMemcpy(pointwise_circcnt+arrayPosn_pre*sizeof(int), 
+//        indicator_array + (arrayPosn+numCircles-1)*sizeof(int), 
+//        sizeof(int), 
+//        cudaMemcpyDeviceToHost);
         duplicationArrayKernel<<<blocks,threadsPerBlock>>>(numCircles,  positions_array+arrayPosn, indicator_array+arrayPosn);
     }}
-    cudaDeviceSynchronize;
+    cudaDeviceSynchronize();
 
     // free indicator array
     cudaFree(indicator_array);
@@ -867,21 +921,40 @@ CudaRenderer::render() {
     blocks = (numCircles*imageHeight*imageWidth + threadsPerBlock - 1) / threadsPerBlock;
     float* alpha_array;
 
-    cudaMalloc((void **)&r, numCircles * imageHeight * imageWidth * sizeof(float));
-    cudaMalloc((void **)&g, numCircles * imageHeight * imageWidth * sizeof(float));
-    cudaMalloc((void **)&b, numCircles * imageHeight * imageWidth * sizeof(float));
-    cudaMalloc((void **)&alpha_array, numCircles * imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&r, (numCircles+2) * imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&g, (numCircles+2) * imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&b, (numCircles+2) * imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&alpha_array, (numCircles+2) * imageHeight * imageWidth * sizeof(float));
 
-    set_half<<<blocks, threadsPerBlock>>>(alpha_array, numCircles*imageHeight*imageWidth);
+//    assignAlphas<<<blocks, threadsPerBlock>>>(alpha_array, (numCircles+2)*imageHeight*imageWidth);
     cudaDeviceSynchronize();
+
+    float* lastR;
+    float* lastG;
+    float* lastB;
+    float* lastAlpha;
+
+    cudaMalloc((void **)&lastR, imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&lastG, imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&lastB, imageHeight * imageWidth * sizeof(float));
+    cudaMalloc((void **)&lastAlpha, imageHeight * imageWidth * sizeof(float));
+
 
     for (int i=0; i<imageWidth; i++) {
       for (int j=0; j<imageHeight; j++) {
         arrayPosn_pre = i*imageHeight + j;
         arrayPosn     = numCircles*arrayPosn_pre;
-        totalThreads  = pointwise_circcnt[i][j];
+        totalThreads  = pointwise_circcnt[i][j]+2;
         blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-        assignRgbKernel<<<blocks,threadsPerBlock>>>(positions_array+arrayPosn, r+arrayPosn,g+arrayPosn,b+arrayPosn, pointwise_circcnt[i][j]);
+        assignRgbKernel<<<blocks,threadsPerBlock>>>(
+            positions_array+arrayPosn, 
+            r+arrayPosn+(arrayPosn_pre)*2,
+            g+arrayPosn+(arrayPosn_pre)*2,
+            b+arrayPosn+(arrayPosn_pre)*2, 
+            alpha_array+arrayPosn+(arrayPosn_pre)*2,
+            pointwise_circcnt[i][j]+2, 
+            i,
+            j);
       }
     }
     cudaDeviceSynchronize();
@@ -890,14 +963,30 @@ CudaRenderer::render() {
     for (int i=0; i<imageWidth; i++) {
       for (int j=0; j<imageHeight; j++) {
         arrayPosn_pre = i*imageHeight + j;
-        arrayPosn     = numCircles*arrayPosn_pre;
+        arrayPosn     = (numCircles+2)*arrayPosn_pre;
         totalThreads  = pointwise_circcnt[i][j];
         blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
         if (pointwise_circcnt[i][j] > 1) {
 //          allCircMap<<<blocks,threadsPerBlock>>>(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]);
-          allCircMap(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]);
+          allCircMap(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]+2);
         }
       }
     }
- 
+    cudaDeviceSynchronize();
+
+    // TODO: Can deallocate r,g,b,alpha for all except last atp if OOM
+
+    totalThreads  = imageHeight*imageWidth;
+    blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
+
+    int* devicePointwiseCirc;
+
+    cudaMalloc((void **)&devicePointwiseCirc, imageHeight * imageWidth * sizeof(int));
+    cudaMemcpy(
+        devicePointwiseCirc,
+        pointwise_circcnt,
+        sizeof(int)*imageHeight*imageWidth, 
+        cudaMemcpyDeviceToHost);
+    deviceFinalCalc<<<blocks,threadsPerBlock>>>(r,g,b,alpha_array,devicePointwiseCirc);
+    
 }
