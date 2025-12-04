@@ -815,11 +815,30 @@ void exclusive_scan(int* input, int N, int* result)
 
 
 
-__global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alpha, int N, int two_d) {
-  int index = blockIdx.x*blockDim.x + threadIdx.x;
-  index *= 2*two_d;
+__global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alpha, int* pointwise_circcnt, int two_d) {
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
+  int iteration = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth = cuConstRendererParams.imageWidth;
+  int numCircles = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth || 
+      y_coord >= imageHeight) {return;}
+
+  // iteration OOB twod wise
+  if (iteration*two_d*2 >= numCircles) {return;}
+
+  int maxIterations = pointwise_circcnt[x_coord*imageHeight + y_coord] + 2;
   
-  if (index >= N) {return;}
+  // this two_d loop (handled at host) not valid for current pixel at all
+  if (two_d > maxIterations/2) {return;}
+
+  // this iteration not valid for current pixel since it has exceeded the limits (0;N;+=two_dplus1)
+  if (iteration*two_d*2 >= maxIterations) {return;}
+  int offset = (x_coord*imageHeight + y_coord)*(numCircles + 1);
+  int index = offset + iteration*2*two_d;
   float r1, r2, rnew, g1, g2, gnew, b1, b2, bnew;
   float alpha1, alpha2, alpha_new;
 //    result[index + 2*two_d-1] += result[index + two_d - 1];  
@@ -844,7 +863,7 @@ __global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alp
   b[index+2*two_d-1] = bnew;
   alpha[index+2*two_d-1] = alpha_new;
 
-  alpha[N-1] = 0; // identity element of the weighted centroid mapping
+  alpha[maxIterations-1] = 0; // identity element of the weighted centroid mapping
   }
 
 __global__ void partialMult_back_kernel (float* r, float* g, float* b, float* alpha, int N, int two_d) {
