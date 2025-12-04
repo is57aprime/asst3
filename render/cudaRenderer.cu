@@ -710,28 +710,88 @@ static inline int nextPow2(int n) {
     return n;
 }
 
-__global__ void partialSum_fwd_kernel (int* input, int* result, int N, int two_d) {
-  int index = blockIdx.x*blockDim.x + threadIdx.x;
-  index *= 2*two_d;
-//  if ((index < N) && ((index + 2*two_d - 1) < N) && ((index + two_d - 1) < N)) {
-  if (index<N) {
-    result[index + 2*two_d-1] += result[index + two_d - 1];  
-    result[N-1] = 0;
-  }
+__global__ void partialSum_fwd_kernel (int* result, int two_d) {
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
+  int iteration = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageWidth = cuConstRendererParams.imageWidth;
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int numCircles = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth || 
+      y_coord >= imageHeight) {return;}
+
+  // iteration OOB twod wise
+
+  int N = numCircles; 
+    N--;
+    N |= N >> 1;
+    N |= N >> 2;
+    N |= N >> 4;
+    N |= N >> 8;
+    N |= N >> 16;
+    N++;
+ 
+  
+  // this two_d loop (handled at host) not valid for current pixel at all
+  if (two_d > numCircles/2) {return;}
+
+  // this iteration not valid for current pixel since it has exceeded the limits (0;N;+=two_dplus1)
+  if (iteration*two_d*2 >= numCircles) {return;}
+  int offset = (x_coord*imageHeight + y_coord)*(numCircles);
+  int index = offset + 2*two_d*iteration;
+  //+ iteration*2*two_d;
+ 
+    if (index + 2*two_d - 1 < numCircles) {
+        result[index + 2*two_d-1] += result[index + two_d - 1];  
+    }
+    if (N-1 < numCircles) {
+    result[offset+N-1] = 0;
+    }
 }
 
 __global__ void setnminusto (int* input, int* result, int N) {
   result[N-1]=0;
 }
 
-__global__ void partialSum_back_kernel (int* input, int* result, int N, int two_d) {
-  int index = blockIdx.x*blockDim.x + threadIdx.x;
-  index *= 2*two_d;
+__global__ void partialSum_back_kernel ( int* result, int two_d) {
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
+  int iteration = blockIdx.z*blockDim.z + threadIdx.z;
 
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth = cuConstRendererParams.imageWidth;
+  int numCircles = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth || 
+      y_coord >= imageHeight) {return;}
+
+  // iteration OOB twod wise
+
+  int N = numCircles; 
+    N--;
+    N |= N >> 1;
+    N |= N >> 2;
+    N |= N >> 4;
+    N |= N >> 8;
+    N |= N >> 16;
+    N++;
+ 
+  
+  // this two_d loop (handled at host) not valid for current pixel at all
+  if (two_d > N/2) {return;}
+
+  // this iteration not valid for current pixel since it has exceeded the limits (0;N;+=two_dplus1)
+  if (iteration*two_d*2 +2*two_d - 1>= numCircles) {return;}
+  int offset = (x_coord*imageHeight + y_coord)*(numCircles);
+  int index = offset +iteration*2*two_d;
+  //+ iteration*2*two_d;
+ 
   int t;
 
 //  if ((index < N) && ((index + 2*two_d - 1) < N) && ((index + two_d - 1) < N)) {
-  if (index < N) {
+  if (index+2*two_d - 1< numCircles) {
     t = result[index+two_d-1];
     result[index+two_d-1] = result[index+two_d*2-1];
     result[index + 2*two_d-1] += t;
@@ -757,65 +817,7 @@ __global__ void partialSum_back_kernel (int* input, int* result, int N, int two_
 // "in-place" scan, since the timing harness makes a copy of input and
 // places it in result
 
-void exclusive_scan(int* input, int N, int* result)
-{
-  N = nextPow2(N);
-  
-  const int threadsPerBlock = 128;
-  int blocks;
-  int totalThreads;
-
-  int two_d;
-//  int host[N];
-//  int logN = (int)ceil(log2(N));
-//  cudaStream_t stream[logN];      // Declare array of streams
-//  for (int i = 0; i < logN; i++) {
-//     cudaStreamCreate(&stream[i]);   // Create each stream
-//  }
-
-  for (two_d = 1; two_d <= N/2; two_d*=2) {
-    totalThreads = (N/two_d)/2;
-    blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-
-//    partialSum_fwd_kernel<<<blocks,threadsPerBlock, 0, stream[two_d]>>>(input, result, N, two_d);
-//  cudaDeviceSynchronize();
-    partialSum_fwd_kernel<<<blocks,threadsPerBlock>>>(input, result, N, two_d);
-  }
-  cudaDeviceSynchronize();
-//  cudaMemcpy(host,result,  N*sizeof(int), cudaMemcpyDeviceToHost);
-//  for (int i=0; i<N; i++) {
-//    printf("%d ", host[i]);
-//  }
-//    printf("\n");
-  
-//  setnminusto<<<1,1>>>(input, result, N); 
-    // downsweep phase
-  for (two_d = N/2; two_d >= 1; two_d /= 2) {
-    totalThreads = (N/two_d)/2;
-    blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-//    partialSum_back_kernel<<<blocks,threadsPerBlock, 0, stream[two_d]>>>(input, result, N, two_d);
-    partialSum_back_kernel<<<blocks,threadsPerBlock>>>(input, result, N, two_d);
-  }
-  
-//  cudaDeviceSynchronize();
-//  cudaMemcpy(host,input ,  N*sizeof(int), cudaMemcpyDeviceToHost);
-//  for (int i=0; i<N; i++) {
-//    printf("%d ", host[i]);
-//  }
-//    printf("\n");
-//  cudaMemcpy(host,result,  N*sizeof(int), cudaMemcpyDeviceToHost);
-//  for (int i=0; i<N; i++) {
-//    printf("%d ", host[i]);
-//  }
-//    printf("\n");
-  
-
- 
-}
-
-
-
-__global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alpha, int* pointwise_circcnt, int two_d) {
+__global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alpha, int* pointwise_circcnt, int* pointwise_circcnt_nextpow2, int two_d) {
   int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
   int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
   int iteration = blockIdx.z*blockDim.z + threadIdx.z;
@@ -828,21 +830,24 @@ __global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alp
       y_coord >= imageHeight) {return;}
 
   // iteration OOB twod wise
-  if (iteration*two_d*2 >= numCircles) {return;}
+  if (iteration*two_d*2 >= numCircles+2) {return;}
 
   int maxIterations = pointwise_circcnt[x_coord*imageHeight + y_coord] + 2;
   
+  int N = pointwise_circcnt_nextpow2[x_coord*imageHeight + y_coord];
   // this two_d loop (handled at host) not valid for current pixel at all
-  if (two_d > maxIterations/2) {return;}
+  if (two_d > N/2) {return;}
 
   // this iteration not valid for current pixel since it has exceeded the limits (0;N;+=two_dplus1)
-  if (iteration*two_d*2 >= maxIterations) {return;}
+  if (iteration*two_d*2 >= N) {return;}
+  if (iteration*two_d*2 + 2*two_d-1 >= maxIterations) {return;}
   int offset = (x_coord*imageHeight + y_coord)*(numCircles + 1);
   int index = offset + iteration*2*two_d;
   float r1, r2, rnew, g1, g2, gnew, b1, b2, bnew;
   float alpha1, alpha2, alpha_new;
 //    result[index + 2*two_d-1] += result[index + two_d - 1];  
-
+  
+  if (iteration*2*two_d + 2*two_d-1 == maxIterations-1) {alpha[maxIterations-1]=0;return;}
   alpha1 = alpha[index + two_d-1];
   alpha2 = alpha[index + 2*two_d-1];
   alpha_new = alpha1 + alpha2 - alpha1*alpha2;
@@ -866,11 +871,38 @@ __global__ void partialMult_fwd_kernel (float* r, float* g, float* b, float* alp
   alpha[maxIterations-1] = 0; // identity element of the weighted centroid mapping
   }
 
-__global__ void partialMult_back_kernel (float* r, float* g, float* b, float* alpha, int N, int two_d) {
-  int index = blockIdx.x*blockDim.x + threadIdx.x;
-  index *= 2*two_d;
+__global__ void partialMult_back_kernel (float* r, float* g, float* b, float* alpha, int* pointwise_circcnt,int* pointwise_circcnt_nextpow2, int two_d) {
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
+  int iteration = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth = cuConstRendererParams.imageWidth;
+  int numCircles = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth || 
+      y_coord >= imageHeight) {return;}
+
+
+      /* conditions:
+      1. twod <= nextpow2 of pixel's array
+      2. i*2*twod <N
+      */
+      if (iteration + two_d*2 >= numCircles + 2) {return;}
+  int maxIterations = pointwise_circcnt[x_coord*imageHeight + y_coord] + 2;
+  int N = pointwise_circcnt_nextpow2[x_coord*imageHeight + y_coord];
   
-  if (index >= N) {return;}
+  // this two_d loop (handled at host) not valid for current pixel at all
+  if (two_d > N/2) {return;}
+
+  // this iteration not valid for current pixel since it has exceeded the limits (0;N;+=two_dplus1)
+  if (iteration*two_d*2 >= N) {return;}
+  int offset = (x_coord*imageHeight + y_coord)*(numCircles + 1);
+  int index = offset + iteration*2*two_d;
+ 
+  //index *= 2*two_d;
+  
+  if (index - offset + 2*two_d - 1 > maxIterations - 2) {return;}
   float r1, r2, rnew, g1, g2, gnew, b1, b2, bnew;
   float alpha1, alpha2, alpha_new;
 
@@ -902,42 +934,67 @@ __global__ void partialMult_back_kernel (float* r, float* g, float* b, float* al
 }
 
 
-__global__ void assignAlphas(float *a, int n) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        a[idx] = 0.5f;
-    }
-}
-
-//__global__ void allCircMap(float* r, float* g, float*b, float* alpha, int N)
-__global__ void allCircMap(float* r, float* g, float*b, float* alpha, int* pointwise_circcnt)
-{
+__global__ void nextpow2Kernel (int* pointwise_circcnt, int* pointwise_circcnt_nextpow2) {
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
 
   int imageHeight = cuConstRendererParams.imageHeight;
   int imageWidth = cuConstRendererParams.imageWidth;
   int numCircles = cuConstRendererParams.numCircles;
 
-  int x_coord = blockIdx.x * blockDim.x + threadIdx.x;
-  int y_coord = blockIdx.y * blockDim.y + threadIdx.y;
-  int len = pointwise_circcnt[x_coord*imageHeight + y_coord]+2;
-  len = nextPow2(len);
-  if (x_coord >= imageWidth || y_coord >= imageHeight) {return;}
-  const int threadsPerBlock = 128;
-  int blocks;
-  int totalThreads;
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight) {return;}
 
-  int arrayOffset = (x_coord*imageHeight + y_coord)*(numCircles+2);
+    int idx = x_coord*imageHeight + y_coord;
+    int n = pointwise_circcnt[idx] + 2;
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    n++;
+    pointwise_circcnt_nextpow2[idx] = n;
 
+}
+//__global__ void allCircMap(float* r, float* g, float*b, float* alpha, int N)
+void allCircMap(float* r, float* g, float*b, float* alpha, int* pointwise_circcnt, int imageHeight, int imageWidth, int numCircles)
+{
+
+//    int imageHeight = cuConstRendererParams.imageHeight;
+//    int imageWidth = cuConstRendererParams.imageWidth;
+//    int numCircles = cuConstRendererParams.numCircles;
+    int numCirclesNextPow = nextPow2(numCircles+2);
+    int* pointwise_circcnt_nextpow2;
+    cudaMalloc((void**)&pointwise_circcnt_nextpow2, imageHeight * imageWidth * sizeof(int));
+
+    dim3 blockDim2D(16,16);
+    dim3 gridDim2D(
+        (imageWidth  + blockDim2D.x - 1) / blockDim2D.x,
+        (imageHeight + blockDim2D.y - 1) / blockDim2D.y
+    );
+
+    printf("13\n");    fflush(stdout);
+    nextpow2Kernel <<<gridDim2D, blockDim2D>>>(pointwise_circcnt, pointwise_circcnt_nextpow2);
+    cudaDeviceSynchronize();
+ 
+    printf("13\n");    fflush(stdout);
   int two_d;
-  for (two_d = 1; two_d <= len/2; two_d*=2) {
-    totalThreads = (len/two_d)/2;
-    blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-    partialMult_fwd_kernel<<<blocks,threadsPerBlock>>>(
-      r+arrayOffset,
-      g+arrayOffset,
-      b+arrayOffset,
-      alpha+arrayOffset,
-      len, two_d);
+  for (two_d = 1; two_d <= numCirclesNextPow/2; two_d*=2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        max(1,((numCircles  + 2)/(two_d*2) + blockDim3D.z - 1) / blockDim3D.z)
+    );
+
+    partialMult_fwd_kernel<<<gridDim3D, blockDim3D>>>(
+      r,g,b,alpha,
+      pointwise_circcnt,
+      pointwise_circcnt_nextpow2,
+      two_d);
+
+    printf("14\n");    fflush(stdout);
   cudaDeviceSynchronize();
   }
   cudaError_t err = cudaGetLastError();
@@ -945,16 +1002,22 @@ __global__ void allCircMap(float* r, float* g, float*b, float* alpha, int* point
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
 
-  for (two_d = len/2; two_d >= 1; two_d /= 2) {
-    totalThreads = (len/two_d)/2;
-    blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-    partialMult_back_kernel<<<blocks,threadsPerBlock>>>(
-      r+arrayOffset,
-      g+arrayOffset,
-      b+arrayOffset,
-      alpha+arrayOffset,
-      len, two_d);
+    printf("14.5\n");    fflush(stdout);
+  for (two_d = numCirclesNextPow/2; two_d >= 1; two_d /= 2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        max(1,((numCircles  + 2)/(2*two_d) + blockDim3D.z - 1) / blockDim3D.z)
+    );
 
+    partialMult_back_kernel<<<gridDim3D, blockDim3D>>>(
+      r,g,b,alpha,
+      pointwise_circcnt,
+      pointwise_circcnt_nextpow2,
+      two_d);
+
+    printf("15\n");    fflush(stdout);
   cudaDeviceSynchronize();
   }
   err = cudaGetLastError();
@@ -962,6 +1025,53 @@ __global__ void allCircMap(float* r, float* g, float*b, float* alpha, int* point
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
 }
+
+void CalculatePartialSum(int* indicator, int numCircles, int imageWidth, int imageHeight)
+{
+
+//    int imageHeight = cuConstRendererParams.imageHeight;
+//    int imageWidth = cuConstRendererParams.imageWidth;
+//    int numCircles = cuConstRendererParams.numCircles;
+    int numCirclesNextPow = nextPow2(numCircles);
+
+     int two_d;
+  for (two_d = 1; two_d <= numCirclesNextPow/2; two_d*=2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        ((numCirclesNextPow)/(two_d*2) + blockDim3D.z - 1) / blockDim3D.z
+    );
+
+    partialSum_fwd_kernel<<<gridDim3D, blockDim3D>>>(
+      indicator,
+      two_d);
+  cudaDeviceSynchronize();
+  }
+  cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+    }
+
+  for (two_d = numCirclesNextPow/2; two_d >= 1; two_d /= 2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        ((numCirclesNextPow)/(2*two_d) + blockDim3D.z - 1) / blockDim3D.z
+    );
+
+    partialSum_back_kernel<<<gridDim3D, blockDim3D>>>(
+        indicator,
+      two_d);
+  cudaDeviceSynchronize();
+  }
+  err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+    }
+}
+
 
 __global__ void assignRgbKernel(
     int* positions, 
@@ -1085,14 +1195,8 @@ CudaRenderer::render() {
     cudaCheckError(cudaDeviceSynchronize());
 
     printf("3\n");    fflush(stdout);
-    int arrayPosn;
-    int arrayPosn_pre;
-    for (int i=0; i<imageWidth; i++) {
-      for (int j=0; j<imageHeight; j++) {
-        arrayPosn = i*numCircles*imageHeight + j*numCircles;
-        exclusive_scan(indicator_array+arrayPosn, numCircles, indicator_array+arrayPosn);
-      }
-    }
+    
+    CalculatePartialSum(indicator_array, numCircles, imageWidth,imageHeight);
     cudaCheckError(cudaDeviceSynchronize());
 
     printf("4\n");    fflush(stdout);
@@ -1147,8 +1251,8 @@ CudaRenderer::render() {
 
     dim3 blockDim3D(8,8,8);
     dim3 gridDim3D(
-        (imageWidth  + blockDim2D.x - 1) / blockDim2D.x,
-        (imageHeight + blockDim2D.y - 1) / blockDim2D.y,
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
         (numCircles  + 2 + blockDim3D.z - 1) / blockDim3D.z
     );
 
@@ -1179,34 +1283,40 @@ CudaRenderer::render() {
     cudaCheckError(cudaDeviceSynchronize());
     cudaCheckError(cudaFree(positions_array));
 
-    for (int i=0; i<imageWidth; i++) {
-      for (int j=0; j<imageHeight; j++) {
-        arrayPosn_pre = i*imageHeight + j;
-        arrayPosn     = (numCircles+2)*arrayPosn_pre;
-        totalThreads  = numCircles;
-        blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-//          allCircMap<<<blocks,threadsPerBlock>>>(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]);
-//          allCircMap(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]+2);
-      }
-    }
+//    for (int i=0; i<imageWidth; i++) {
+//      for (int j=0; j<imageHeight; j++) {
+//        arrayPosn_pre = i*imageHeight + j;
+//        arrayPosn     = (numCircles+2)*arrayPosn_pre;
+//        totalThreads  = numCircles;
+//        blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
+////          allCircMap<<<blocks,threadsPerBlock>>>(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]);
+////          allCircMap(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]+2);
+//      }
+//    }
     cudaCheckError(cudaDeviceSynchronize());
-    allCircMap<<<gridDim2D, blockDim2D>>>(
+
+    printf("10\n");    fflush(stdout);
+    allCircMap(
       r,g,b,alpha_array,
-      pointwise_circcnt);
+      pointwise_circcnt,
+      imageHeight, imageWidth, numCircles
+    );
+
+    printf("11\n");    fflush(stdout);
 
     // TODO: Can deallocate r,g,b,alpha for all except last atp if OOM
 
     totalThreads  = imageHeight*imageWidth;
     blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
 
-    int* devicePointwiseCirc;
-
-    cudaCheckError(cudaMalloc((void **)&devicePointwiseCirc, imageHeight * imageWidth * sizeof(int)));
-cudaCheckError( cudaMemcpy(
-        devicePointwiseCirc,
-        pointwise_circcnt,
-        sizeof(int)*imageHeight*imageWidth, 
-        cudaMemcpyHostToDevice));
-    deviceFinalCalc<<<blocks,threadsPerBlock>>>(r,g,b,alpha_array,devicePointwiseCirc);
+//    int* devicePointwiseCirc;
+//
+//    cudaCheckError(cudaMalloc((void **)&devicePointwiseCirc, imageHeight * imageWidth * sizeof(int)));
+//cudaCheckError( cudaMemcpy(
+//        devicePointwiseCirc,
+//        pointwise_circcnt,
+//        sizeof(int)*imageHeight*imageWidth, 
+//        cudaMemcpyHostToDevice));
+//    deviceFinalCalc<<<blocks,threadsPerBlock>>>(r,g,b,alpha_array,devicePointwiseCirc);
     
 }
