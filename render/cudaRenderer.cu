@@ -443,7 +443,7 @@ __global__ void kernelCalculateIndex (int* indicator_array) {
                 
     if (dist<=rad*rad) {
         indicator_array[arrayPosn] = 1;
-        printf("\n circle %d at posn %d %d\n", circleIdx, pointX, pointY ); 
+//        printf("\n circle %d at posn %d %d\n", circleIdx, pointX, pointY ); 
         return;
     }
 }
@@ -873,8 +873,9 @@ __global__ void matMulPointwise (
 
     // idx causing overflow; mul not needed
     int idxSmall = idxDelta*2*arrayIdx;
-    int idxBig   = idxDelta*2*(arrayIdx+1);
+    int idxBig   = idxDelta*(2*arrayIdx+1);
     if (idxBig  >= pointCircCnt) {return;}
+//    printf("\n multiply matrix %d to %d for x=%d y=%d", idxBig, idxSmall, x_coord, y_coord);
   
     int arrayOffset = (x_coord*imageHeight + y_coord)*(numCircles);
     idxSmall += arrayOffset;
@@ -899,6 +900,13 @@ __global__ void matMulPointwise (
     float grUpdated = glBig*grSmall + grBig;
     float blUpdated = blBig*blSmall;
     float brUpdated = blBig*brSmall + brBig;
+
+    rl[idxBig] = rlUpdated;
+    gl[idxBig] = glUpdated;
+    bl[idxBig] = blUpdated;
+    rr[idxBig] = rrUpdated;
+    gr[idxBig] = grUpdated;
+    br[idxBig] = brUpdated;
 }
 
 
@@ -915,7 +923,7 @@ void allCircMap(
     int imageWidth, 
     int numCircles)
 {
-    printf("13\n");    fflush(stdout);
+//    printf("13\n");    fflush(stdout);
     int outerLoop = ceil(log2(numCircles));
     int remainingMatrices = numCircles;
     int remainingVldMatrixDelta = 1;
@@ -1076,8 +1084,6 @@ __global__ void printPointwiseGrid(int* indicator_array, int* pointwise_circcnt,
   int numCircles = cuConstRendererParams.numCircles;
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         printf("\n indicatorarray \n");
-//        for (int i = 0; i<numcircles; i++) {
-//            printf("\n circle %d : \n",i);
             for (int j=0; j<imageWidth; j++) {
                 for (int k =0; k<imageHeight; k++) {
                     printf("\n indicator at %d %d: \n",j,k);
@@ -1088,13 +1094,13 @@ __global__ void printPointwiseGrid(int* indicator_array, int* pointwise_circcnt,
             }
 
         }
-        printf("\n pointwisecirccnt \n");
+//        printf("\n pointwisecirccnt \n");
         
         for (int y = 0; y < imageHeight; y++) {
             for (int x = 0; x < imageWidth; x++) {
-                printf("%4d ", pointwise_circcnt[x * imageHeight + y]);
+//                printf("%4d ", pointwise_circcnt[x * imageHeight + y]);
             }
-            printf("\n");
+//            printf("\n");
         }
     }
 }
@@ -1102,7 +1108,7 @@ __global__ void printPointwiseGrid(int* indicator_array, int* pointwise_circcnt,
 
 void
 CudaRenderer::render() {
-    printf("1\n"); 
+//    printf("1\n"); 
     short imageWidth = image->width;
     short imageHeight = image->height;
 
@@ -1134,13 +1140,13 @@ CudaRenderer::render() {
     (imageWidth + blockDim.y - 1) / blockDim.y,    
     (imageHeight+ blockDim.z - 1) / blockDim.z     
     );
-    printf("2\n");    fflush(stdout);
+//    printf("2\n");    fflush(stdout);
 //    kernelRenderCircles<<<gridDim, blockDim>>>();
 //    cudaMemset(indicator_array, 0, numCircles * imageHeight * imageWidth);
     kernelCalculateIndex<<<gridDim,blockDim>>>(indicator_array);
     cudaCheckError(cudaDeviceSynchronize());
 
-    printf("3\n");    fflush(stdout);
+//    printf("3\n");    fflush(stdout);
 //    printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);  
 //    CalculatePartialSum(indicator_array, numCircles, imageWidth,imageHeight);
 //    thrust::exclusive_scan(thrust::device, g_data, g_data + N, g_data);
@@ -1156,7 +1162,7 @@ int pSumNext = -1;
     }
 //    cudaCheckError(cudaDeviceSynchronize());
 cudaDeviceSynchronize();
-    printf("4\n");    fflush(stdout);
+//    printf("4\n");    fflush(stdout);
     int threadsPerBlock=256;
     int totalThreads = numCircles;
     int blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
@@ -1179,10 +1185,10 @@ cudaDeviceSynchronize();
 
 //    cudaCheckError(cudaDeviceSynchronize());
 cudaDeviceSynchronize();
-    printf("6\n");    fflush(stdout);
+//    printf("6\n");    fflush(stdout);
 
     // test pointwise circcnt
-        printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);
+//        printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);
         cudaDeviceSynchronize();
 
     // free indicator array
@@ -1200,7 +1206,7 @@ cudaDeviceSynchronize();
     cudaCheckError(cudaMalloc((void **)&br, (numCircles) * imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&alpha_array, (numCircles) * imageHeight * imageWidth * sizeof(float)));
 
-    printf("7\n");    fflush(stdout);
+//    printf("7\n");    fflush(stdout);
 //    assignAlphas<<<blocks, threadsPerBlock>>>(alpha_array, (numCircles+2)*imageHeight*imageWidth);
     cudaDeviceSynchronize();
 
@@ -1214,7 +1220,7 @@ cudaDeviceSynchronize();
     cudaCheckError(cudaMalloc((void **)&lastB, imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&lastAlpha, imageHeight * imageWidth * sizeof(float)));
 
-    printf("8\n");    fflush(stdout);
+//    printf("8\n");    fflush(stdout);
 
     dim3 blockDim3D(8,8,8);
     dim3 gridDim3D(
@@ -1246,7 +1252,7 @@ cudaDeviceSynchronize();
 //            i,
 //            j);
 
-    printf("9\n");    fflush(stdout);
+//    printf("9\n");    fflush(stdout);
     cudaCheckError(cudaDeviceSynchronize());
     cudaCheckError(cudaFree(positions_array));
 
@@ -1262,14 +1268,14 @@ cudaDeviceSynchronize();
 //    }
     cudaCheckError(cudaDeviceSynchronize());
 
-    printf("10\n");    fflush(stdout);
+//    printf("10\n");    fflush(stdout);
     allCircMap(
       rl,gl,bl,rr,gr,br,
       pointwise_circcnt,
       imageHeight, imageWidth, numCircles
     );
 
-    printf("11\n");    fflush(stdout);
+//    printf("11\n");    fflush(stdout);
 
     deviceFinalCalc<<<gridDim2D, blockDim2D>>>(
       rl,gl,bl,rr,gr,br,pointwise_circcnt);
