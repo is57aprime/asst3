@@ -1051,7 +1051,9 @@ __global__ void deviceFinalCalc (
     float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (y_coord* imageWidth + x_coord)]);
     float4 existingColor = *imgPtr;
     float4 colorFinal;
-    colorFinal.x = rl[index]*existingColor.x + rr[index];
+//    colorFinal.x = rl[index]*existingColor.x + rr[index];
+// TODO : experiem,nt
+    colorFinal.x = 0;
     colorFinal.y = gl[index]*existingColor.y + gr[index];
     colorFinal.z = bl[index]*existingColor.z + br[index];
     colorFinal.w = 1; // doesnt matter
@@ -1074,7 +1076,7 @@ __global__ void extractCircleCountsKernel(
     int pixelIndex = x * imageHeight + y;
     int arrayPos = pixelIndex * numCircles;
     
-    pointwise_circcnt[pixelIndex] = indicator_array[arrayPos + numCircles - 1] + indicator_array[arrayPos + numCircles - 2];
+    pointwise_circcnt[pixelIndex] = indicator_array[arrayPos + numCircles - 1];
 //        printf("point %d %d indicator %d\n",x,y,indicator_array[arrayPos + numCircles - 1]);
 
 }
@@ -1152,7 +1154,7 @@ CudaRenderer::render() {
 //    thrust::exclusive_scan(thrust::device, g_data, g_data + N, g_data);
 // TDOO : Fix the partial sum impl for better parallelization rather than serialized thrust calls
 int pSumIdx = 0;
-int pSumNext = -1;
+int pSumNext = 0;
     for (int i=0; i<imageWidth; i++) {
         for (int j = 0; j<imageHeight; j++) {
             pSumNext += numCircles;
