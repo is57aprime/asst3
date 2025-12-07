@@ -880,7 +880,7 @@ __global__ void matMulPointwise (
 //    printf("\n multiply matrix %d to %d for x=%d y=%d", idxBig, idxSmall, x_coord, y_coord);
   
     if (x_coord == imageWidth/2 && y_coord == imageHeight/2) {
-        printf ("\n mult matrix %d with %d \n", idxSmall, idxBig);
+//        printf ("\n mult matrix %d with %d \n", idxSmall, idxBig);
     }
 
     int arrayOffset = (x_coord*imageHeight + y_coord)*(numCircles);
@@ -915,9 +915,9 @@ __global__ void matMulPointwise (
     br[idxSmall] = brUpdated;
 
     if (x_coord == imageWidth/2 && y_coord == imageHeight/2) {
-    printf("\n %f %f     %f %f     %f %f\n", rlBig, rrBig, rlSmall, rrSmall, rlUpdated, rrUpdated);
+//    printf("\n %f %f     %f %f     %f %f\n", rlBig, rrBig, rlSmall, rrSmall, rlUpdated, rrUpdated);
     float f1=0; float f2=1;
-    printf("%f %f     %f %f     %f %f\n", f1, f2, f1, f2, f1, f2);
+//    printf("%f %f     %f %f     %f %f\n", f1, f2, f1, f2, f1, f2);
     }
 }
 
@@ -1021,12 +1021,12 @@ __global__ void createPositionsArrayKernel (
   if (circleIdx == 0 && (indicator_array[point_circposn_offset] == 1)) {
     positions_array[point_base_offset]=0; 
   }
-    if (x_coord == 13 && y_coord == 8) {printf("\n GGGGGGGG %d\n", circleIdx);}
+//    if (x_coord == 13 && y_coord == 8) {printf("\n GGGGGGGG %d\n", circleIdx);}
   if (circleIdx > 0) {
     if(indicator_array[point_circposn_offset] > 
         indicator_array[point_circposn_offset - 1]) {
             *(positions_array + point_base_offset + *(indicator_array+point_circposn_offset-1)) = circleIdx;
-            if (x_coord == 13 && y_coord == 8) {printf("\n FFFFFFFF %d\n", circleIdx);}
+//            if (x_coord == 13 && y_coord == 8) {printf("\n FFFFFFFF %d\n", circleIdx);}
         }
   }
 }
