@@ -436,8 +436,8 @@ __global__ void kernelCalculateIndex (int* indicator_array) {
 
     if (pointX < screenMinX || pointX > screenMaxX) {indicator_array[arrayPosn] = 0; return;}
     if (pointY < screenMinY || pointY > screenMaxY) {indicator_array[arrayPosn] = 0; return;}
-    float dx = (pointX * invWidth - p.x);
-    float dy = (pointY * invHeight- p.y);
+    float dx = ((pointX + 0.5) * invWidth - p.x);
+    float dy = ((pointY + 0.5) * invHeight- p.y);
     float dist = dx*dx + dy*dy;
     if (dist>rad*rad) {indicator_array[arrayPosn] = 0; return;}
                 
