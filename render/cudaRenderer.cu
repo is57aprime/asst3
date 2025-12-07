@@ -1012,7 +1012,7 @@ __global__ void createPositionsArrayKernel (
 
   if (x_coord >= imageWidth ||
       y_coord >= imageHeight ||
-      circleIdx >= pointwise_circcnt[x_coord*imageHeight + y_coord])
+      circleIdx >= numCircles)
         {return;}
 
   int point_base_offset = (x_coord*imageHeight + y_coord)*numCircles;
@@ -1021,11 +1021,13 @@ __global__ void createPositionsArrayKernel (
   if (circleIdx == 0 && (indicator_array[point_circposn_offset] == 1)) {
     positions_array[point_base_offset]=0; 
   }
+    if (x_coord == 13 && y_coord == 8) {printf("\n GGGGGGGG %d\n", circleIdx);}
   if (circleIdx > 0) {
     if(indicator_array[point_circposn_offset] > 
         indicator_array[point_circposn_offset - 1]) {
-            positions_array[point_circposn_offset] = circleIdx;
-    }
+            *(positions_array + point_base_offset + *(indicator_array+point_circposn_offset-1)) = circleIdx;
+            if (x_coord == 13 && y_coord == 8) {printf("\n FFFFFFFF %d\n", circleIdx);}
+        }
   }
 }
 
@@ -1064,6 +1066,9 @@ __global__ void assignRgbKernel(
   *(rl+arrayOffset+circleIdx) = 0.5f;
   *(gl+arrayOffset+circleIdx) = 0.5f;
   *(bl+arrayOffset+circleIdx) = 0.5f;
+  if (x_coord == 13 && y_coord == 8) {
+    printf("\n circleIdx %d has value %d \n", circleIdx, positions[arrayOffset+circleIdx]);
+  }
 //  *(alpha+arrayOffset+circleIdx) = 0.5f;
   }
 }
@@ -1121,25 +1126,47 @@ __global__ void extractCircleCountsKernel(
     int arrayPos = pixelIndex * numCircles;
     
     pointwise_circcnt[pixelIndex] = indicator_array[arrayPos + numCircles - 1];
-//        printf("point %d %d indicator %d\n",x,y,indicator_array[arrayPos + numCircles - 1]);
-
 }
 
-__global__ void printPointwiseGrid(int* indicator_array, int* pointwise_circcnt, int imageWidth, int imageHeight) {
+__global__ void printPointwiseGrid(int* positions_array, int* indicator_array, int* pointwise_circcnt, int imageWidth, int imageHeight) {
 
   int numCircles = cuConstRendererParams.numCircles;
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("\n indicatorarray \n");
+    printf("\n--------------------POINTWISE CIRCCNT--------------------\n");
+        for (int k =0; k<imageHeight; k++) {
+            printf("\n");
             for (int j=0; j<imageWidth; j++) {
-                for (int k =0; k<imageHeight; k++) {
-                    printf("\n indicator at %d %d: \n",j,k);
-                    for (int i = 0; i<numCircles; i++) {
-                        printf("%d ",indicator_array[j*imageHeight*numCircles + k*numCircles + i]);
-                    
+                        printf("%d", pointwise_circcnt[j*imageHeight + (imageHeight - 1 - k)]);
+                    printf("   ");
                 }
             }
 
+
+    printf("\n--------------------INDICATOR ARRAY--------------------\n");
+        for (int k =0; k<imageHeight; k++) {
+            printf("\n");
+            for (int j=0; j<imageWidth; j++) {
+                    printf("   ");
+                    for (int i = 0; i<numCircles; i++) {
+                        printf("%d",indicator_array[j*imageHeight*numCircles + (imageHeight - 1 - k)*numCircles + i]);
+                }
+            }
         }
+
+    printf("\n--------------------POSITIONS ARRAY--------------------\n");
+        for (int k =0; k<imageHeight; k++) {
+            printf("\n");
+            for (int j=0; j<imageWidth; j++) {
+                    printf("   ");
+                    for (int i = 0; i<numCircles; i++) {
+                        printf("%d",positions_array[j*imageHeight*numCircles + (imageHeight - 1 - k)*numCircles + i]);
+                }
+                    printf("/[%d]", pointwise_circcnt[j*imageHeight+ (imageHeight - 1 - k)]);
+            }
+        }
+
+
+
 //        printf("\n pointwisecirccnt \n");
         
         for (int y = 0; y < imageHeight; y++) {
@@ -1234,11 +1261,8 @@ cudaDeviceSynchronize();
 //    printf("6\n");    fflush(stdout);
 
     // test pointwise circcnt
-//        printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);
+//        printPointwiseGrid<<<1, 1>>>(positions_array, indicator_array, pointwise_circcnt, imageWidth, imageHeight);
         cudaDeviceSynchronize();
-
-    // free indicator array
-    cudaCheckError(cudaFree(indicator_array));
 
     // initialize arrays of alphas (l * b * circ)
     blocks = (numCircles*imageHeight*imageWidth + threadsPerBlock - 1) / threadsPerBlock;
@@ -1282,11 +1306,13 @@ cudaDeviceSynchronize();
     );
     cudaDeviceSynchronize();
 
+//        printPointwiseGrid<<<1, 1>>>(positions_array, indicator_array, pointwise_circcnt, imageWidth, imageHeight);
     assignRgbKernel<<<gridDim3D, blockDim3D>>>(
       positions_array,
       pointwise_circcnt,
       rl,gl,bl,rr,gr,br,alpha_array);
 
+    cudaCheckError(cudaFree(indicator_array));
 
 //    for (int i=0; i<imageWidth; i++) {
 //      for (int j=0; j<imageHeight; j++) {
