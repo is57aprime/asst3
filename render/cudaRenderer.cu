@@ -9,6 +9,7 @@
 #include <driver_functions.h>
 #include <thrust/scan.h>
 #include <thrust/execution_policy.h>
+#include "CycleTimer.h"
 
 #include "cudaRenderer.h"
 #include "image.h"
@@ -1194,10 +1195,16 @@ CudaRenderer::render() {
     float *br;
 
     int* pointwise_circcnt;
+
+    double t = CycleTimer::currentSeconds();
     cudaMalloc((void**)&pointwise_circcnt, imageHeight * imageWidth * sizeof(int));
 
     cudaCheckError(cudaMalloc((void **)&indicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
     cudaCheckError(cudaMalloc((void **)&positions_array, numCircles * imageHeight * imageWidth * sizeof(int)));
+
+    t = CycleTimer::currentSeconds() -t;
+    printf("allocate mem for  : time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
 
     dim3 blockDim(8,8,8);
 
@@ -1207,25 +1214,35 @@ CudaRenderer::render() {
     (imageHeight+ blockDim.z - 1) / blockDim.z     
     );
 
+/*********************************************************************
+ * CALCULATE DISTANCE OF PIXELS FROM CIRCLE CENTERS TO STORE IN ARRAY *
+ *********************************************************************/
     kernelCalculateIndex<<<gridDim,blockDim>>>(indicator_array);
     cudaCheckError(cudaDeviceSynchronize());
 
-// TDOO : Fix the partial sum impl for better parallelization rather than serialized thrust calls
-int pSumIdx = 0;
-int pSumNext = 0;
-    for (int i=0; i<imageWidth; i++) {
-        for (int j = 0; j<imageHeight; j++) {
-            pSumNext += numCircles;
-                thrust::inclusive_scan(thrust::device, indicator_array + pSumIdx, indicator_array + pSumNext, indicator_array + pSumIdx);
-            pSumIdx += numCircles;
+    t = CycleTimer::currentSeconds() -t;
+    printf("Calculating index array (i.e. distance of each pixel's center from circles): time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
+
+
+/*****************************************************************************************************
+ * // TDOO : FIX THE PARTIAL SUM IMPL FOR BETTER PARALLELIZATION RATHER THAN SERIALIZED THRUST CALLS *
+ *****************************************************************************************************/
+    int pSumIdx = 0;
+    int pSumNext = 0;
+        for (int i=0; i<imageWidth; i++) {
+            for (int j = 0; j<imageHeight; j++) {
+                pSumNext += numCircles;
+                    thrust::inclusive_scan(thrust::device, indicator_array + pSumIdx, indicator_array + pSumNext, indicator_array + pSumIdx);
+                pSumIdx += numCircles;
+            }
         }
-    }
 
-cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 
-    int threadsPerBlock=256;
-    int totalThreads = numCircles;
-    int blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
+    t = CycleTimer::currentSeconds() -t;
+    printf(" : time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
 
     dim3 blockDim2D(16, 16);
     dim3 gridDim2D(
@@ -1242,11 +1259,11 @@ cudaDeviceSynchronize();
         imageHeight
     );
 
-cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
+    t = CycleTimer::currentSeconds() -t;
+    printf("calculating circcnt (how many circles intersect each pixel): time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
 
-        cudaDeviceSynchronize();
-
-    blocks = (numCircles*imageHeight*imageWidth + threadsPerBlock - 1) / threadsPerBlock;
     float* alpha_array;
 
     cudaCheckError(cudaMalloc((void **)&rl, (numCircles) * imageHeight * imageWidth * sizeof(float)));
@@ -1257,20 +1274,12 @@ cudaDeviceSynchronize();
     cudaCheckError(cudaMalloc((void **)&br, (numCircles) * imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&alpha_array, (numCircles) * imageHeight * imageWidth * sizeof(float)));
 
-    cudaDeviceSynchronize();
+   cudaDeviceSynchronize();
 
-    float* lastR;
-    float* lastG;
-    float* lastB;
-    float* lastAlpha;
-
-    cudaCheckError(cudaMalloc((void **)&lastR, imageHeight * imageWidth * sizeof(float)));
-    cudaCheckError(cudaMalloc((void **)&lastG, imageHeight * imageWidth * sizeof(float)));
-    cudaCheckError(cudaMalloc((void **)&lastB, imageHeight * imageWidth * sizeof(float)));
-    cudaCheckError(cudaMalloc((void **)&lastAlpha, imageHeight * imageWidth * sizeof(float)));
-
-    dim3 blockDim3D(8,8,8);
-    dim3 gridDim3D(
+    t = CycleTimer::currentSeconds() -t;
+    printf(" allocating memory for all matrices and alpha value: time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
+ 
         (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
         (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
         (numCircles  + blockDim3D.z - 1) / blockDim3D.z
@@ -1282,6 +1291,10 @@ cudaDeviceSynchronize();
         pointwise_circcnt
     );
     cudaDeviceSynchronize();
+
+    t = CycleTimer::currentSeconds() -t;
+    printf("Create positions array (find out indices of circles intersecting each pixel): time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
 
     assignRgbKernel<<<gridDim3D, blockDim3D>>>(
       positions_array,
@@ -1295,6 +1308,11 @@ cudaDeviceSynchronize();
 
    cudaCheckError(cudaDeviceSynchronize());
 
+    t = CycleTimer::currentSeconds() -t;
+    printf("assigning initial RGB values (i.e. filling in all matrix data) : time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
+
+
     allCircMap(
       rl,gl,bl,rr,gr,br,
       pointwise_circcnt,
@@ -1304,7 +1322,13 @@ cudaDeviceSynchronize();
     deviceFinalCalc<<<gridDim2D, blockDim2D>>>(
       rl,gl,bl,rr,gr,br,pointwise_circcnt);
       
- 
+      cudaDeviceSynchronize();
+
+    t = CycleTimer::currentSeconds() -t;
+    printf("Multiplying Matrices : time taken = %d secs", t);
+    t = CycleTimer::currentSeconds();
+
+
 
     // TODO: Can deallocate r,g,b,alpha for all except last atp if OOM
 
