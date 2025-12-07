@@ -901,12 +901,12 @@ __global__ void matMulPointwise (
     float blUpdated = blBig*blSmall;
     float brUpdated = blBig*brSmall + brBig;
 
-    rl[idxBig] = rlUpdated;
-    gl[idxBig] = glUpdated;
-    bl[idxBig] = blUpdated;
-    rr[idxBig] = rrUpdated;
-    gr[idxBig] = grUpdated;
-    br[idxBig] = brUpdated;
+    rl[idxSmall] = rlUpdated;
+    gl[idxSmall] = glUpdated;
+    bl[idxSmall] = blUpdated;
+    rr[idxSmall] = rrUpdated;
+    gr[idxSmall] = grUpdated;
+    br[idxSmall] = brUpdated;
 }
 
 
