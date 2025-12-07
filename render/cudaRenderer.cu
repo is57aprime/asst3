@@ -1203,7 +1203,7 @@ CudaRenderer::render() {
     cudaCheckError(cudaMalloc((void **)&positions_array, numCircles * imageHeight * imageWidth * sizeof(int)));
 
     t = CycleTimer::currentSeconds() -t;
-    printf("allocate mem for  : time taken = %d secs", t);
+    printf("\n allocate mem for  : time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
     dim3 blockDim(8,8,8);
@@ -1221,7 +1221,7 @@ CudaRenderer::render() {
     cudaCheckError(cudaDeviceSynchronize());
 
     t = CycleTimer::currentSeconds() -t;
-    printf("Calculating index array (i.e. distance of each pixel's center from circles): time taken = %d secs", t);
+    printf("\n Calculating index array (i.e. distance of each pixel's center from circles): time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
 
@@ -1241,7 +1241,7 @@ CudaRenderer::render() {
     cudaDeviceSynchronize();
 
     t = CycleTimer::currentSeconds() -t;
-    printf(" : time taken = %d secs", t);
+    printf("\n inclusive scan : time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
     dim3 blockDim2D(16, 16);
@@ -1261,7 +1261,7 @@ CudaRenderer::render() {
 
     cudaDeviceSynchronize();
     t = CycleTimer::currentSeconds() -t;
-    printf("calculating circcnt (how many circles intersect each pixel): time taken = %d secs", t);
+    printf("\n calculating circcnt (how many circles intersect each pixel): time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
     float* alpha_array;
@@ -1277,9 +1277,11 @@ CudaRenderer::render() {
    cudaDeviceSynchronize();
 
     t = CycleTimer::currentSeconds() -t;
-    printf(" allocating memory for all matrices and alpha value: time taken = %d secs", t);
+    printf("\n  allocating memory for all matrices and alpha value: time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
  
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
         (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
         (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
         (numCircles  + blockDim3D.z - 1) / blockDim3D.z
@@ -1293,7 +1295,7 @@ CudaRenderer::render() {
     cudaDeviceSynchronize();
 
     t = CycleTimer::currentSeconds() -t;
-    printf("Create positions array (find out indices of circles intersecting each pixel): time taken = %d secs", t);
+    printf("\n Create positions array (find out indices of circles intersecting each pixel): time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
     assignRgbKernel<<<gridDim3D, blockDim3D>>>(
@@ -1309,7 +1311,7 @@ CudaRenderer::render() {
    cudaCheckError(cudaDeviceSynchronize());
 
     t = CycleTimer::currentSeconds() -t;
-    printf("assigning initial RGB values (i.e. filling in all matrix data) : time taken = %d secs", t);
+    printf("\n assigning initial RGB values (i.e. filling in all matrix data) : time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
 
@@ -1325,7 +1327,7 @@ CudaRenderer::render() {
       cudaDeviceSynchronize();
 
     t = CycleTimer::currentSeconds() -t;
-    printf("Multiplying Matrices : time taken = %d secs", t);
+    printf("\n Multiplying Matrices : time taken = %f secs\n", t);
     t = CycleTimer::currentSeconds();
 
 
