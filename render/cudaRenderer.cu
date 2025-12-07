@@ -1181,12 +1181,10 @@ __global__ void printPointwiseGrid(int* positions_array, int* indicator_array, i
 
 void
 CudaRenderer::render() {
-//    printf("1\n"); 
     short imageWidth = image->width;
     short imageHeight = image->height;
 
     int *indicator_array;
-//    int *vindicator_array;
     int *positions_array;
     float *rl;
     float *gl;
@@ -1199,13 +1197,8 @@ CudaRenderer::render() {
     cudaMalloc((void**)&pointwise_circcnt, imageHeight * imageWidth * sizeof(int));
 
     cudaCheckError(cudaMalloc((void **)&indicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
-//    cudaCheckError(cudaMalloc((void **)&vindicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
     cudaCheckError(cudaMalloc((void **)&positions_array, numCircles * imageHeight * imageWidth * sizeof(int)));
 
-
-   //cudaMalloc((void **)&pointwise_circcnt, imageHeight * imageWidth * sizeof(int));
-
-    // 256 threads per block is a healthy number
     dim3 blockDim(8,8,8);
 
     dim3 gridDim(
@@ -1213,16 +1206,10 @@ CudaRenderer::render() {
     (imageWidth + blockDim.y - 1) / blockDim.y,    
     (imageHeight+ blockDim.z - 1) / blockDim.z     
     );
-//    printf("2\n");    fflush(stdout);
-//    kernelRenderCircles<<<gridDim, blockDim>>>();
-//    cudaMemset(indicator_array, 0, numCircles * imageHeight * imageWidth);
+
     kernelCalculateIndex<<<gridDim,blockDim>>>(indicator_array);
     cudaCheckError(cudaDeviceSynchronize());
 
-//    printf("3\n");    fflush(stdout);
-//    printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);  
-//    CalculatePartialSum(indicator_array, numCircles, imageWidth,imageHeight);
-//    thrust::exclusive_scan(thrust::device, g_data, g_data + N, g_data);
 // TDOO : Fix the partial sum impl for better parallelization rather than serialized thrust calls
 int pSumIdx = 0;
 int pSumNext = 0;
@@ -1233,14 +1220,13 @@ int pSumNext = 0;
             pSumIdx += numCircles;
         }
     }
-//    cudaCheckError(cudaDeviceSynchronize());
+
 cudaDeviceSynchronize();
-//    printf("4\n");    fflush(stdout);
+
     int threadsPerBlock=256;
     int totalThreads = numCircles;
     int blocks = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
 
-    // copy(exclusive scanned indicator array last values -> pointwise circcnt)
     dim3 blockDim2D(16, 16);
     dim3 gridDim2D(
         (imageWidth + blockDim2D.x - 1) / blockDim2D.x,
@@ -1256,15 +1242,10 @@ cudaDeviceSynchronize();
         imageHeight
     );
 
-//    cudaCheckError(cudaDeviceSynchronize());
 cudaDeviceSynchronize();
-//    printf("6\n");    fflush(stdout);
 
-    // test pointwise circcnt
-//        printPointwiseGrid<<<1, 1>>>(positions_array, indicator_array, pointwise_circcnt, imageWidth, imageHeight);
         cudaDeviceSynchronize();
 
-    // initialize arrays of alphas (l * b * circ)
     blocks = (numCircles*imageHeight*imageWidth + threadsPerBlock - 1) / threadsPerBlock;
     float* alpha_array;
 
@@ -1276,8 +1257,6 @@ cudaDeviceSynchronize();
     cudaCheckError(cudaMalloc((void **)&br, (numCircles) * imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&alpha_array, (numCircles) * imageHeight * imageWidth * sizeof(float)));
 
-//    printf("7\n");    fflush(stdout);
-//    assignAlphas<<<blocks, threadsPerBlock>>>(alpha_array, (numCircles+2)*imageHeight*imageWidth);
     cudaDeviceSynchronize();
 
     float* lastR;
@@ -1289,8 +1268,6 @@ cudaDeviceSynchronize();
     cudaCheckError(cudaMalloc((void **)&lastG, imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&lastB, imageHeight * imageWidth * sizeof(float)));
     cudaCheckError(cudaMalloc((void **)&lastAlpha, imageHeight * imageWidth * sizeof(float)));
-
-//    printf("8\n");    fflush(stdout);
 
     dim3 blockDim3D(8,8,8);
     dim3 gridDim3D(
@@ -1306,7 +1283,6 @@ cudaDeviceSynchronize();
     );
     cudaDeviceSynchronize();
 
-//        printPointwiseGrid<<<1, 1>>>(positions_array, indicator_array, pointwise_circcnt, imageWidth, imageHeight);
     assignRgbKernel<<<gridDim3D, blockDim3D>>>(
       positions_array,
       pointwise_circcnt,
@@ -1314,47 +1290,16 @@ cudaDeviceSynchronize();
 
     cudaCheckError(cudaFree(indicator_array));
 
-//    for (int i=0; i<imageWidth; i++) {
-//      for (int j=0; j<imageHeight; j++) {
-//        arrayPosn_pre = i*imageHeight + j;
-//        arrayPosn     = numCircles*arrayPosn_pre;
-//        totalThreads  = numCircles+2;
-//        blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-//        assignRgbKernel<<<blocks,threadsPerBlock>>>(
-//            positions_array+arrayPosn, 
-//            pointwise_circcnt,
-//            r+arrayPosn+(arrayPosn_pre)*2,
-//            g+arrayPosn+(arrayPosn_pre)*2,
-//            b+arrayPosn+(arrayPosn_pre)*2, 
-//            alpha_array+arrayPosn+(arrayPosn_pre)*2,
-//            pointwise_circcnt[i][j]+2, 
-//            i,
-//            j);
-
-//    printf("9\n");    fflush(stdout);
     cudaCheckError(cudaDeviceSynchronize());
     cudaCheckError(cudaFree(positions_array));
 
-//    for (int i=0; i<imageWidth; i++) {
-//      for (int j=0; j<imageHeight; j++) {
-//        arrayPosn_pre = i*imageHeight + j;
-//        arrayPosn     = (numCircles+2)*arrayPosn_pre;
-//        totalThreads  = numCircles;
-//        blocks        = (totalThreads + threadsPerBlock-1)/threadsPerBlock;
-////          allCircMap<<<blocks,threadsPerBlock>>>(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]);
-////          allCircMap(r+arrayPosn, g+arrayPosn, b+arrayPosn, alpha_array + arrayPosn, pointwise_circcnt[i][j]+2);
-//      }
-//    }
-    cudaCheckError(cudaDeviceSynchronize());
+   cudaCheckError(cudaDeviceSynchronize());
 
-//    printf("10\n");    fflush(stdout);
     allCircMap(
       rl,gl,bl,rr,gr,br,
       pointwise_circcnt,
       imageHeight, imageWidth, numCircles
     );
-
-//    printf("11\n");    fflush(stdout);
 
     deviceFinalCalc<<<gridDim2D, blockDim2D>>>(
       rl,gl,bl,rr,gr,br,pointwise_circcnt);
@@ -1364,15 +1309,5 @@ cudaDeviceSynchronize();
     // TODO: Can deallocate r,g,b,alpha for all except last atp if OOM
 
 
-//    int* devicePointwiseCirc;
-//
-//    cudaCheckError(cudaMalloc((void **)&devicePointwiseCirc, imageHeight * imageWidth * sizeof(int)));
-//cudaCheckError( cudaMemcpy(
-//        devicePointwiseCirc,
-//        pointwise_circcnt,
-//        sizeof(int)*imageHeight*imageWidth, 
-//        cudaMemcpyHostToDevice));
-//    deviceFinalCalc<<<blocks,threadsPerBlock>>>(r,g,b,alpha_array,devicePointwiseCirc);
-    
 }
 
