@@ -8,6 +8,7 @@
 #include <cuda_runtime.h>
 #include <driver_functions.h>
 #include <thrust/scan.h>
+#include <thrust/execution_policy.h>
 
 #include "cudaRenderer.h"
 #include "image.h"
@@ -412,7 +413,7 @@ __global__ void kernelCalculateIndex (int* indicator_array) {
   int pointY    = blockIdx.z * blockDim.z + threadIdx.z; 
   int arrayPosn = pointX*numCircles*imageHeight + pointY*numCircles + circleIdx;
 
-  if (circleIdx>= cuConstRendererParams.numCircles || pointX >= imageWidth || pointY >= imageHeight)
+  if ((circleIdx>= cuConstRendererParams.numCircles) || pointX >= imageWidth || pointY >= imageHeight)
     return;
 
   int circleIdx3 = 3*circleIdx;
@@ -439,7 +440,12 @@ __global__ void kernelCalculateIndex (int* indicator_array) {
     float dy = (pointY * invHeight- p.y);
     float dist = dx*dx + dy*dy;
     if (dist>rad*rad) {indicator_array[arrayPosn] = 0; return;}
-    if (dist<=rad*rad) {indicator_array[arrayPosn] = 1; return;}
+                
+    if (dist<=rad*rad) {
+        indicator_array[arrayPosn] = 1;
+        printf("\n circle %d at posn %d %d\n", circleIdx, pointX, pointY ); 
+        return;
+    }
 }
 __global__ void kernelRenderCircles() {
 
@@ -1060,7 +1066,37 @@ __global__ void extractCircleCountsKernel(
     int pixelIndex = x * imageHeight + y;
     int arrayPos = pixelIndex * numCircles;
     
-    pointwise_circcnt[pixelIndex] = indicator_array[arrayPos + numCircles - 1];
+    pointwise_circcnt[pixelIndex] = indicator_array[arrayPos + numCircles - 1] + indicator_array[arrayPos + numCircles - 2];
+//        printf("point %d %d indicator %d\n",x,y,indicator_array[arrayPos + numCircles - 1]);
+
+}
+
+__global__ void printPointwiseGrid(int* indicator_array, int* pointwise_circcnt, int imageWidth, int imageHeight) {
+
+  int numCircles = cuConstRendererParams.numCircles;
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("\n indicatorarray \n");
+//        for (int i = 0; i<numcircles; i++) {
+//            printf("\n circle %d : \n",i);
+            for (int j=0; j<imageWidth; j++) {
+                for (int k =0; k<imageHeight; k++) {
+                    printf("\n indicator at %d %d: \n",j,k);
+                    for (int i = 0; i<numCircles; i++) {
+                        printf("%d ",indicator_array[j*imageHeight*numCircles + k*numCircles + i]);
+                    
+                }
+            }
+
+        }
+        printf("\n pointwisecirccnt \n");
+        
+        for (int y = 0; y < imageHeight; y++) {
+            for (int x = 0; x < imageWidth; x++) {
+                printf("%4d ", pointwise_circcnt[x * imageHeight + y]);
+            }
+            printf("\n");
+        }
+    }
 }
 
 
@@ -1071,7 +1107,7 @@ CudaRenderer::render() {
     short imageHeight = image->height;
 
     int *indicator_array;
-    int *vindicator_array;
+//    int *vindicator_array;
     int *positions_array;
     float *rl;
     float *gl;
@@ -1084,7 +1120,7 @@ CudaRenderer::render() {
     cudaMalloc((void**)&pointwise_circcnt, imageHeight * imageWidth * sizeof(int));
 
     cudaCheckError(cudaMalloc((void **)&indicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
-    cudaCheckError(cudaMalloc((void **)&vindicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
+//    cudaCheckError(cudaMalloc((void **)&vindicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
     cudaCheckError(cudaMalloc((void **)&positions_array, numCircles * imageHeight * imageWidth * sizeof(int)));
 
 
@@ -1100,22 +1136,26 @@ CudaRenderer::render() {
     );
     printf("2\n");    fflush(stdout);
 //    kernelRenderCircles<<<gridDim, blockDim>>>();
+//    cudaMemset(indicator_array, 0, numCircles * imageHeight * imageWidth);
     kernelCalculateIndex<<<gridDim,blockDim>>>(indicator_array);
     cudaCheckError(cudaDeviceSynchronize());
 
     printf("3\n");    fflush(stdout);
-    
+//    printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);  
 //    CalculatePartialSum(indicator_array, numCircles, imageWidth,imageHeight);
-int offset = 0;
+//    thrust::exclusive_scan(thrust::device, g_data, g_data + N, g_data);
+// TDOO : Fix the partial sum impl for better parallelization rather than serialized thrust calls
+int pSumIdx = 0;
+int pSumNext = -1;
     for (int i=0; i<imageWidth; i++) {
-        for (int j=0; j<imageHeight; j++) {
-            thrust::exclusive_scan(indicator_array+offset,indicator_array+offset+numCircles-1,indicator_array);
-            offset+=numCircles;
-            printf ("%d %d \n", i,j);
+        for (int j = 0; j<imageHeight; j++) {
+            pSumNext += numCircles;
+                thrust::inclusive_scan(thrust::device, indicator_array + pSumIdx, indicator_array + pSumNext, indicator_array + pSumIdx);
+            pSumIdx += numCircles;
         }
     }
-
-    cudaCheckError(cudaDeviceSynchronize());
+//    cudaCheckError(cudaDeviceSynchronize());
+cudaDeviceSynchronize();
     printf("4\n");    fflush(stdout);
     int threadsPerBlock=256;
     int totalThreads = numCircles;
@@ -1127,7 +1167,8 @@ int offset = 0;
         (imageWidth + blockDim2D.x - 1) / blockDim2D.x,
         (imageHeight + blockDim2D.y - 1) / blockDim2D.y
     );
-
+    cudaMemset(pointwise_circcnt, 0,  imageHeight * imageWidth);
+    cudaDeviceSynchronize();
     extractCircleCountsKernel<<<gridDim2D, blockDim2D>>>(
         indicator_array, 
         pointwise_circcnt, 
@@ -1136,8 +1177,14 @@ int offset = 0;
         imageHeight
     );
 
-    cudaCheckError(cudaDeviceSynchronize());
+//    cudaCheckError(cudaDeviceSynchronize());
+cudaDeviceSynchronize();
     printf("6\n");    fflush(stdout);
+
+    // test pointwise circcnt
+        printPointwiseGrid<<<1, 1>>>(indicator_array, pointwise_circcnt, imageWidth, imageHeight);
+        cudaDeviceSynchronize();
+
     // free indicator array
     cudaCheckError(cudaFree(indicator_array));
 
@@ -1243,3 +1290,4 @@ int offset = 0;
 //    deviceFinalCalc<<<blocks,threadsPerBlock>>>(r,g,b,alpha_array,devicePointwiseCirc);
     
 }
+
