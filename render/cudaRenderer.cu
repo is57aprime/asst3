@@ -875,8 +875,14 @@ __global__ void matMulPointwise (
     int idxSmall = idxDelta*2*arrayIdx;
     int idxBig   = idxDelta*(2*arrayIdx+1);
     if (idxBig  >= pointCircCnt) {return;}
+    // TODO TODO TODO TODO TODO remove this debug thingie below
+//    if (x_coord >= imageWidth/2) {return;}
 //    printf("\n multiply matrix %d to %d for x=%d y=%d", idxBig, idxSmall, x_coord, y_coord);
   
+    if (x_coord == imageWidth/2 && y_coord == imageHeight/2) {
+        printf ("\n mult matrix %d with %d \n", idxSmall, idxBig);
+    }
+
     int arrayOffset = (x_coord*imageHeight + y_coord)*(numCircles);
     idxSmall += arrayOffset;
     idxBig += arrayOffset;
@@ -907,6 +913,12 @@ __global__ void matMulPointwise (
     rr[idxSmall] = rrUpdated;
     gr[idxSmall] = grUpdated;
     br[idxSmall] = brUpdated;
+
+    if (x_coord == imageWidth/2 && y_coord == imageHeight/2) {
+    printf("\n %f %f     %f %f     %f %f\n", rlBig, rrBig, rlSmall, rrSmall, rlUpdated, rrUpdated);
+    float f1=0; float f2=1;
+    printf("%f %f     %f %f     %f %f\n", f1, f2, f1, f2, f1, f2);
+    }
 }
 
 
@@ -983,7 +995,39 @@ void CalculatePartialSum(int* indicator, int numCircles, int imageWidth, int ima
         printf("CUDA error: %s\n", cudaGetErrorString(err));
     }
 }
+__global__ void createPositionsArrayKernel (
+        int *indicator_array,
+        int *positions_array,
+        int *pointwise_circcnt
+    ) {
 
+  int x_coord = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord = blockIdx.y*blockDim.y + threadIdx.y;
+  int circleIdx = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight ||
+      circleIdx >= pointwise_circcnt[x_coord*imageHeight + y_coord])
+        {return;}
+
+  int point_base_offset = (x_coord*imageHeight + y_coord)*numCircles;
+  int point_circposn_offset = point_base_offset + circleIdx;
+
+  if (circleIdx == 0 && (indicator_array[point_circposn_offset] == 1)) {
+    positions_array[point_base_offset]=0; 
+  }
+  if (circleIdx > 0) {
+    if(indicator_array[point_circposn_offset] > 
+        indicator_array[point_circposn_offset - 1]) {
+            positions_array[point_circposn_offset] = circleIdx;
+    }
+  }
+}
 
 __global__ void assignRgbKernel(
     int* positions, 
@@ -1013,7 +1057,7 @@ __global__ void assignRgbKernel(
   int arrayOffset = (x_coord*imageHeight + y_coord)*(numCircles);
 
   if(circleIdx < pointwise_circcnt[x_coord*imageHeight + y_coord]){
-  float3 rgb_former = *(float3*)&(cuConstRendererParams.color[3*positions[circleIdx]]);
+  float3 rgb_former = *(float3*)&(cuConstRendererParams.color[3*positions[arrayOffset+circleIdx]]);
   *(rr+arrayOffset+circleIdx) = rgb_former.x/2;
   *(gr+arrayOffset+circleIdx) = rgb_former.y/2;
   *(br+arrayOffset+circleIdx) = rgb_former.z/2;
@@ -1051,9 +1095,9 @@ __global__ void deviceFinalCalc (
     float4* imgPtr = (float4*)(&cuConstRendererParams.imageData[4 * (y_coord* imageWidth + x_coord)]);
     float4 existingColor = *imgPtr;
     float4 colorFinal;
-//    colorFinal.x = rl[index]*existingColor.x + rr[index];
+    colorFinal.x = rl[index]*existingColor.x + rr[index];
 // TODO : experiem,nt
-    colorFinal.x = 0;
+//    colorFinal.x = 0;
     colorFinal.y = gl[index]*existingColor.y + gr[index];
     colorFinal.z = bl[index]*existingColor.z + br[index];
     colorFinal.w = 1; // doesnt matter
@@ -1230,6 +1274,13 @@ cudaDeviceSynchronize();
         (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
         (numCircles  + blockDim3D.z - 1) / blockDim3D.z
     );
+
+    createPositionsArrayKernel<<<gridDim3D, blockDim3D>>>(
+        indicator_array,
+        positions_array,
+        pointwise_circcnt
+    );
+    cudaDeviceSynchronize();
 
     assignRgbKernel<<<gridDim3D, blockDim3D>>>(
       positions_array,
