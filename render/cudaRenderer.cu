@@ -1031,6 +1031,134 @@ __global__ void createPositionsArrayKernel (
         }
   }
 }
+__global__ void initTempLastElements (
+        int *indicator_array,
+        int *lastElementArrayTemp
+    ) {
+  int x_coord     = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord     = blockIdx.y*blockDim.y + threadIdx.y;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight)
+        {return;}
+
+    *(lastElementArrayTemp + x_coord*imageHeight + y_coord) = 
+        *(indicator_array + x_coord*imageHeight + y_coord + numCircles - 1); 
+  }
+
+__global__ void reassignLastElements (
+        int *indicator_array,
+        int *lastElementArrayTemp
+    ) {
+  int x_coord     = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord     = blockIdx.y*blockDim.y + threadIdx.y;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight)
+        {return;}
+
+        // assuming exclusive scan done and array shifted by 1
+    *(indicator_array + x_coord*imageHeight + y_coord + numCircles - 1) = 
+        *(indicator_array + x_coord*imageHeight + y_coord + numCircles - 2) +
+            *(lastElementArrayTemp + x_coord*imageHeight + y_coord) ;
+  }
+
+__global__ void setNminus1toZero (
+        int *indicator_array
+    ) {
+  int x_coord     = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord     = blockIdx.y*blockDim.y + threadIdx.y;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight)
+        {return;}
+  *(indicator_array + (x_coord*imageHeight + y_coord)*(numCircles) + numCircles - 1) = 0;
+  }
+ 
+__global__ void excluiveSumPartitionedArrayUpsweep (
+        int *indicator_array,
+        int  two_d
+//        int  N,
+    ) {
+  int x_coord     = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord     = blockIdx.y*blockDim.y + threadIdx.y;
+  int i_by_twodp1 = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight)
+        {return;}
+
+  int two_dplus1 = two_d << 1;
+  int i = two_dplus1*i_by_twodp1;
+  if (i + two_dplus1 -1 > numCircles-1){
+    return;
+  }
+  
+  int arrayOffset = (x_coord*imageHeight + y_coord)*numCircles;
+  *(indicator_array + 
+    arrayOffset + i + two_dplus1 -1) += 
+  *(indicator_array + 
+    arrayOffset + i + two_dplus1);
+}
+
+__global__ void exclusiveSumPartitionedArrayDownsweep (
+        int *indicator_array,
+        int  two_d
+    ) {
+  int x_coord     = blockIdx.x*blockDim.x + threadIdx.x;
+  int y_coord     = blockIdx.y*blockDim.y + threadIdx.y;
+  int i_by_twodp1 = blockIdx.z*blockDim.z + threadIdx.z;
+
+  int imageHeight = cuConstRendererParams.imageHeight;
+  int imageWidth  = cuConstRendererParams.imageWidth;
+  int numCircles  = cuConstRendererParams.numCircles;
+
+  if (x_coord >= imageWidth ||
+      y_coord >= imageHeight)
+        {return;}
+
+  int two_dplus1 = two_d << 1;
+  int i = two_dplus1*i_by_twodp1;
+  if (i + two_dplus1 -1 > numCircles-1){
+    return;
+  
+  int arrayOffset = (x_coord*imageHeight + y_coord)*numCircles;
+  int temp = *(indicator_array + two_d - 1);
+
+  *(indicator_array + arrayOffset + 
+        i + two_d -1) = 
+  *(indicator_array + arrayOffset + 
+        i + two_dplus1-1);
+
+  *(indicator_array + arrayOffset + 
+        i + two_dplus1-1) += temp;
+  }
+  
+  int arrayOffset = (x_coord*imageHeight + y_coord)*numCircles;
+  int temp = 
+  *(indicator_array + 
+    arrayOffset + i + two_dplus1 -1) += 
+  *(indicator_array + 
+    arrayOffset + i + two_dplus1);
+}
+
+
 
 __global__ void assignRgbKernel(
     int* positions, 
@@ -1180,6 +1308,7 @@ __global__ void printPointwiseGrid(int* positions_array, int* indicator_array, i
 }
 
 
+
 void
 CudaRenderer::render() {
     short imageWidth = image->width;
@@ -1199,7 +1328,8 @@ CudaRenderer::render() {
     double t = CycleTimer::currentSeconds();
     cudaMalloc((void**)&pointwise_circcnt, imageHeight * imageWidth * sizeof(int));
 
-    cudaCheckError(cudaMalloc((void **)&indicator_array, numCircles * imageHeight * imageWidth * sizeof(int)));
+    // 1 additional position to shift the exclusive sum to right to get inclusive sum
+    cudaCheckError(cudaMalloc((void **)&indicator_array, (numCircles * imageHeight * imageWidth + 1) * sizeof(int)));
     cudaCheckError(cudaMalloc((void **)&positions_array, numCircles * imageHeight * imageWidth * sizeof(int)));
 
     t = CycleTimer::currentSeconds() -t;
@@ -1228,31 +1358,108 @@ CudaRenderer::render() {
 /*****************************************************************************************************
  * // TDOO : FIX THE PARTIAL SUM IMPL FOR BETTER PARALLELIZATION RATHER THAN SERIALIZED THRUST CALLS *
  *****************************************************************************************************/
-    int pSumIdx = 0;
-    int pSumNext = 0;
-        for (int i=0; i<imageWidth; i++) {
-            for (int j = 0; j<imageHeight; j++) {
-                pSumNext += numCircles;
-                    thrust::inclusive_scan(thrust::device, indicator_array + pSumIdx, indicator_array + pSumNext, indicator_array + pSumIdx);
-                pSumIdx += numCircles;
-            }
-        }
 
-    cudaDeviceSynchronize();
+/***********
+ * // SLOW *
+ ***********/
+//    int pSumIdx = 0;
+//    int pSumNext = 0;
+//        for (int i=0; i<imageWidth; i++) {
+//            for (int j = 0; j<imageHeight; j++) {
+//                pSumNext += numCircles;
+//                    thrust::inclusive_scan(thrust::device, indicator_array + pSumIdx, indicator_array + pSumNext, indicator_array + pSumIdx);
+//                pSumIdx += numCircles;
+//            }
+//        }
 
-    t = CycleTimer::currentSeconds() -t;
-    printf("\n inclusive scan : time taken = %f secs\n", t);
-    t = CycleTimer::currentSeconds();
+/********
+ * FAST *
+ ********/
+    int *lastElementArrayTemp;
+
+    cudaCheckError(cudaMalloc((void **)&lastElementArrayTemp, (imageHeight * imageWidth) * sizeof(int)));
 
     dim3 blockDim2D(16, 16);
     dim3 gridDim2D(
         (imageWidth + blockDim2D.x - 1) / blockDim2D.x,
         (imageHeight + blockDim2D.y - 1) / blockDim2D.y
     );
+ 
+    // step 1 : copy all last elements to a temp array
+    initTempLastElements <<<gridDim2D, blockDim2D>>>(
+        indicator_array,
+        lastElementArrayTemp
+    );
+
+    int N = nextPow2(numCircles);
+
+    // step 2 : upsweep
+    for (int two_d = 1; two_d <= N/2; two_d*=2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        (N/(2*two_d)+ blockDim3D.z - 1) / blockDim3D.z
+    );
+        excluiveSumPartitionedArrayUpsweep<<<gridDim3D, blockDim3D>>> (
+            indicator_array, two_d
+        );
+    }
+
+    cudaDeviceSynchronize();
+
+    // step 3 : set to zero if needed
+    if (N == numCircles) {
+        setNminus1toZero<<<gridDim2D, blockDim2D>>> (
+            indicator_array
+        );
+    }
+
+    cudaDeviceSynchronize();
+
+     // step 4 : downsweep
+    for (int two_d = 1; two_d <= N/2; two_d*=2) {
+    dim3 blockDim3D(8,8,8);
+    dim3 gridDim3D(
+        (imageWidth  + blockDim3D.x - 1) / blockDim3D.x,
+        (imageHeight + blockDim3D.y - 1) / blockDim3D.y,
+        (N/(2*two_d)+ blockDim3D.z - 1) / blockDim3D.z
+    );
+ 
+        exclusiveSumPartitionedArrayDownsweep<<<gridDim3D, blockDim3D>>> (
+            indicator_array, two_d
+        );
+    }
+
+    cudaDeviceSynchronize();
+
+    // step 5 : reassignment
+    reassignLastElements <<<gridDim2D, blockDim2D>>>(
+        indicator_array + 1,
+        lastElementArrayTemp
+    );
+
+    cudaDeviceSynchronize();
+
+/**********************
+ * INCLUSIVE SUM ENDS *
+ **********************/
+
+
+      printPointwiseGrid<<<1,1>>> (positions_array, indicator_array + 1,  pointwise_circcnt, imageWidth, imageHeight);
+    t = CycleTimer::currentSeconds() -t;
+    printf("\n inclusive scan : time taken = %f secs\n", t);
+    t = CycleTimer::currentSeconds();
+
+//    blockDim2D(16, 16);
+//    gridDim2D(
+//        (imageWidth + blockDim2D.x - 1) / blockDim2D.x,
+//        (imageHeight + blockDim2D.y - 1) / blockDim2D.y
+//    );
     cudaMemset(pointwise_circcnt, 0,  imageHeight * imageWidth);
     cudaDeviceSynchronize();
     extractCircleCountsKernel<<<gridDim2D, blockDim2D>>>(
-        indicator_array, 
+        indicator_array + 1, 
         pointwise_circcnt, 
         numCircles, 
         imageWidth, 
@@ -1288,7 +1495,7 @@ CudaRenderer::render() {
     );
 
     createPositionsArrayKernel<<<gridDim3D, blockDim3D>>>(
-        indicator_array,
+        indicator_array + 1,
         positions_array,
         pointwise_circcnt
     );
@@ -1302,6 +1509,7 @@ CudaRenderer::render() {
       positions_array,
       pointwise_circcnt,
       rl,gl,bl,rr,gr,br,alpha_array);
+
 
     cudaCheckError(cudaFree(indicator_array));
 
